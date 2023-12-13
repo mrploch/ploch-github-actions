@@ -1,0 +1,47 @@
+﻿name: 'Build, Test and run SonarCloud Analysis for .NET Project'
+description: 'Build and Test .NET Solution with SonarCloud'
+inputs:
+  solution-path:
+    description: 'Solution path to build'
+    required: true
+  sonar-project-key:
+    description: 'SonarCloud project key'
+    required: true
+  sonar-organization:
+    description: 'SonarCloud organization'
+    required: true
+  sonar-token:
+    description: 'SonarCloud token'
+    required: true
+  sonar-url:
+    description: 'SonarQube Url, defaults to SonarCloud'
+    default: 'https://sonarcloud.io'
+    required: false
+outputs:
+  random-number:
+    description: "Random number"
+    value: ${{ steps.random-number-generator.outputs.random-number }}
+runs:
+  using: "composite"
+  steps:
+    - name: Restore dependencies    
+      shell: pwsh
+      run: dotnet restore ${{ inputs.solution-path }}
+    - name: Install SonarCloud Scanner
+      shell: pwsh
+      run: dotnet tool install --global dotnet-sonarscanner
+    - name: Install dotnet-coverage
+      shell: pwsh
+      run: dotnet tool install --global dotnet-coverage
+    - name: SonarScanner Begin
+      shell: pwsh
+      run: dotnet sonarscanner begin /k:"${{ inputs.sonar-project-key }}" /o:"${{ inputs.sonar-organization }}" /d:sonar.login="${{ inputs.sonar-token }}" /d:sonar.cs.opencover.reportsPaths=**/CoverageResults/coverage.opencover.xml /d:sonar.host.url="${{ inputs.sonar-url }}"
+    - name: Build
+      shell: pwsh
+      run: dotnet build ${{ inputs.solution-path }} --no-restore
+    - name: Test Coverage
+      shell: pwsh
+      run: dotnet test ${{ inputs.solution-path }} --verbosity normal --no-build --logger "trx;LogFileName=TestOutputResults.xml" /p:CollectCoverage=true /p:CoverletOutput=./CoverageResults/ "/p:CoverletOutputFormat=cobertura%2copencover"
+    - name: SonarScanner End
+      shell: pwsh
+      run: dotnet sonarscanner end /d:sonar.login="${{ inputs.sonar-token }}"
