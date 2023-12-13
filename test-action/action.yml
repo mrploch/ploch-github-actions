@@ -1,0 +1,32 @@
+
+name: Hello World Action
+description: A GitHub composite action that prints "Hello, World!"
+
+inputs:
+  name:
+    description: 'The name to include in the greeting.'
+    required: true
+    default: 'World'
+
+outputs:
+  random-number:
+    description: "Full greeting"
+    value: ${{ steps.outputstep.outputs.greeting }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set Log Level
+      shell: pwsh
+      run: $InformationPreference="Continue"
+    - name: Print Hello World
+      shell: pwsh
+      run: Write-Information "Hello, ${{ inputs.name }}!"
+      id: hello
+    - uses: Amadevus/pwsh-script@v2
+      with:
+        script: $ {{ github.action_path }}/test-script.ps1         
+    - name: Set Output
+      id: outputstep
+      shell: pwsh
+      run: echo "::set-output name=greeting::${{ steps.hello.outputs.stdout }}"
