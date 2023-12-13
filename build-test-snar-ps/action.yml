@@ -1,0 +1,43 @@
+
+name: Hello World Action
+description: 'Build and Test .NET Solution with SonarCloud'
+author: 'Kris Ploch'
+inputs:
+  dotnet-version:
+    description: '.NET version'
+    required: false
+    default: 8.0.x  
+  solution-path:
+    description: 'Solution path to build'
+    required: true
+  sonar-project-key:
+    description: 'SonarCloud project key'
+    required: true
+  sonar-organization:
+    description: 'SonarCloud organization'
+    required: true
+  sonar-token:
+    description: 'SonarCloud token'
+    required: true
+  sonar-url:
+    description: 'SonarQube Url, defaults to SonarCloud'
+    default: 'https://sonarcloud.io'
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Action Properties
+      shell: pwsh
+      run: |
+        $InformationPreference="Continue"
+        Write-Information "Building ${{ inputs.solution-path }} with .NET ${{ inputs.dotnet-version }}"
+        Write-Information "SonarCloud Organization: ${{ inputs.sonar-organization }} Project Key: ${{ inputs.sonar-project-key }}"
+    - uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu' # See 'Supported distributions' for available options
+        java-version: '17'
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}

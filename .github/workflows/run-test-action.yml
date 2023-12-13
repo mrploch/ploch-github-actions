@@ -1,0 +1,20 @@
+name: Run test-action
+on:
+  workflow_dispatch:
+env: 
+  SONAR_PROJECT_KEY: mrploch_ploch-common
+  SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - run: echo "The branch name is ${{ github.repository }}"
+      - uses: actions/checkout@v3
+      - name: Run Test Script
+        uses: ./.github/actions/test-script-action
+        with:
+            name: "Test Script Action blah blah blah"
+
+
