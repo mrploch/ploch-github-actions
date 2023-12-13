@@ -13,7 +13,7 @@ jobs:
       - run: echo "The branch name is ${{ github.repository }}"
       - uses: actions/checkout@v3
       - name: Run Test Script
-        uses: ./.github/actions/test-script-action
+        uses: ./test-script-action
         with:
             name: "Test Script Action blah blah blah"
 
