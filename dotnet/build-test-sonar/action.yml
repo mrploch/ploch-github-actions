@@ -1,6 +1,11 @@
 ﻿name: 'Build, Test and run SonarCloud Analysis for .NET Project'
 description: 'Build and Test .NET Solution with SonarCloud'
+author: 'Kris Ploch'
 inputs:
+  dotnet-version:
+    description: '.NET version'
+    required: false
+    default: 8.0.x  
   solution-path:
     description: 'Solution path to build'
     required: true
@@ -24,6 +29,14 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu' # See 'Supported distributions' for available options
+        java-version: '17'
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
     - name: Restore dependencies    
       shell: pwsh
       run: dotnet restore ${{ inputs.solution-path }}
