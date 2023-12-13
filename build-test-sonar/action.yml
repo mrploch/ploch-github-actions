@@ -29,6 +29,12 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Action Properties
+      shell: pwsh
+      run: |
+        $InformationPreference="Continue"
+        Write-Information "Building ${{ inputs.solution-path }} with .NET ${{ inputs.dotnet-version }}"
+        Write-Information "SonarCloud Organization: ${{ inputs.sonar-organization }} Project Key: ${{ inputs.sonar-project-key }}"
     - uses: actions/setup-java@v4
       with:
         distribution: 'zulu' # See 'Supported distributions' for available options
