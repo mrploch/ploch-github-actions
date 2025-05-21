@@ -5,7 +5,7 @@ inputs:
   dotnet-version:
     description: '.NET version'
     required: false
-    default: 8.0.x  
+    default: 9.0.x  
   solution-path:
     description: 'Solution path to build'
     required: true
