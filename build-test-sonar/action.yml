@@ -60,7 +60,7 @@ runs:
       run: dotnet build ${{ inputs.solution-path }} --no-restore
     - name: Test Coverage
       shell: pwsh
-      run: dotnet test ${{ inputs.solution-path }} --verbosity normal --no-build --logger "trx;LogFileName=TestOutputResults.xml" /p:CollectCoverage=true /p:CoverletOutput=./CoverageResults/ "/p:CoverletOutputFormat=cobertura%2copencover"
+      run: dotnet test ${{ inputs.solution-path }} --verbosity normal --no-build --logger "trx;LogFileName=test-results.trx" /p:CollectCoverage=true /p:CoverletOutput=./CoverageResults/ "/p:CoverletOutputFormat=cobertura%2copencover"
     - name: SonarScanner End
       shell: pwsh
       run: dotnet sonarscanner end /d:sonar.login="${{ inputs.sonar-token }}"
