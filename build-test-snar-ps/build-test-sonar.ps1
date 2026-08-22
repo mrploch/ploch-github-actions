@@ -1,3 +1,8 @@
+if ([string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
+    Write-Error "SONAR_TOKEN is not set. Without it the scanner authenticates anonymously and the analysis fails later with 'Not authorized or project not found'."
+    exit 1
+}
+
 dotnet tool install --global dotnet-sonarscanner
 dotnet tool install --global dotnet-coverage
 dotnet restore Ploch.Common.sln
