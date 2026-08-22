@@ -3,9 +3,13 @@ description: 'Build and Test .NET Solution with SonarCloud'
 author: 'Kris Ploch'
 inputs:
   dotnet-version:
-    description: '.NET version'
+    description: >-
+      .NET SDK version to install, in actions/setup-dotnet syntax. Defaults to
+      9.0.x. Consumers targeting a newer framework (for example net10.0) should
+      set this explicitly, or commit a global.json, rather than relying on
+      whichever SDK the runner image happens to ship.
     required: false
-    default: 9.0.x  
+    default: 9.0.x
   solution-path:
     description: 'Solution path to build'
     required: true
@@ -22,25 +26,31 @@ inputs:
     description: 'SonarQube Url, defaults to SonarCloud'
     default: 'https://sonarcloud.io'
     required: false
-outputs:
-  random-number:
-    description: "Random number"
-    value: ${{ steps.random-number-generator.outputs.random-number }}
 runs:
   using: "composite"
   steps:
+    - name: Validate SonarCloud Token
+      shell: pwsh
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+      run: |
+        if ([string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
+          Write-Output "::error::The 'sonar-token' input is empty. SonarCloud analysis would run anonymously and then fail during post-processing with a misleading 'Not authorized or project not found'. Check that the calling workflow passes a non-empty secret and that the secret is available to this job."
+          exit 1
+        }
+        Write-Output "SonarCloud token supplied ($($env:SONAR_TOKEN.Length) characters)."
     - name: Action Properties
       shell: pwsh
       run: |
         $InformationPreference="Continue"
         Write-Information "Building ${{ inputs.solution-path }} with .NET ${{ inputs.dotnet-version }}"
-        Write-Information "SonarCloud Organization: ${{ inputs.sonar-organization }} Project Key: ${{ inputs.sonar-project-key }} Login: ${{ inputs.sonar-token }}"
-    - uses: actions/setup-java@v4
+        Write-Information "SonarCloud Organization: ${{ inputs.sonar-organization }} Project Key: ${{ inputs.sonar-project-key }}"
+    - uses: actions/setup-java@v5
       with:
         distribution: 'zulu' # See 'Supported distributions' for available options
         java-version: '17'
     - name: Setup .NET
-      uses: actions/setup-dotnet@v3
+      uses: actions/setup-dotnet@v6
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
     - name: Restore dependencies    
@@ -54,7 +64,9 @@ runs:
       run: dotnet tool install --global dotnet-coverage
     - name: SonarScanner Begin
       shell: pwsh
-      run: dotnet sonarscanner begin /k:"${{ inputs.sonar-project-key }}" /o:"${{ inputs.sonar-organization }}" /d:sonar.login="${{ inputs.sonar-token }}" /d:sonar.cs.opencover.reportsPaths=**/CoverageResults/coverage.opencover.xml /d:sonar.host.url="${{ inputs.sonar-url }}"
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+      run: dotnet sonarscanner begin /k:"${{ inputs.sonar-project-key }}" /o:"${{ inputs.sonar-organization }}" /d:sonar.token="$env:SONAR_TOKEN" /d:sonar.cs.opencover.reportsPaths=**/CoverageResults/coverage.opencover.xml /d:sonar.host.url="${{ inputs.sonar-url }}"
     - name: Build
       shell: pwsh
       run: dotnet build ${{ inputs.solution-path }} --no-restore
@@ -63,4 +75,6 @@ runs:
       run: dotnet test ${{ inputs.solution-path }} --verbosity normal --no-build --logger "trx;LogFileName=test-results.trx" /p:CollectCoverage=true /p:CoverletOutput=./CoverageResults/ "/p:CoverletOutputFormat=cobertura%2copencover"
     - name: SonarScanner End
       shell: pwsh
-      run: dotnet sonarscanner end /d:sonar.login="${{ inputs.sonar-token }}"
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+      run: dotnet sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
