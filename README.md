@@ -85,15 +85,26 @@ Supply the build version — for repositories using Nerdbank.GitVersioning:
   run: echo "value=$(dotnet nbgv get-version --variable NuGetPackageVersion)" >> "$GITHUB_OUTPUT"
 ```
 
-### Fork pull requests
+### Fork and Dependabot pull requests
 
-Repository secrets are not exposed to pull requests raised from forks, nor to
-Dependabot, so `sonar-token` is legitimately empty there. In that case the action
-**skips the SonarCloud steps with a warning and still runs build and test**, rather
-than failing the whole check.
+GitHub withholds ordinary Actions secrets from two kinds of pull request:
 
-An empty token on a same-repository run is treated as a misconfiguration and fails
-the job — silently analysing anonymously produces a misleading
+- those raised from a **fork**, and
+- those authored by **Dependabot** — note these run from a branch in *this*
+  repository, so a `head.repo.full_name` test alone does not detect them.
+
+`sonar-token` is legitimately empty in both cases. The action **skips the SonarCloud
+steps with a warning and still runs build and test**, rather than failing the whole
+check.
+
+| Token | Pull request | Outcome |
+|---|---|---|
+| present | any | analysis runs |
+| absent | fork, or Dependabot-authored | `::warning::`, scanner skipped, build and test still run |
+| absent | anything else | `::error::`, job fails |
+
+An empty token on an ordinary run is treated as a misconfiguration and fails the job
+— silently analysing anonymously produces a misleading
 `Not authorized or project not found` much later in the run.
 
 ### Coverage

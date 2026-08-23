@@ -22,10 +22,11 @@ inputs:
     required: true
   sonar-token:
     description: >-
-      SonarCloud token. May be empty on a pull request raised from a fork, where
-      repository secrets are not exposed; analysis is then skipped with a warning
-      and the build and test steps still run. An empty token on a same-repository
-      run is treated as a misconfiguration and fails the job.
+      SonarCloud token. May be empty on a pull request raised from a fork or
+      authored by Dependabot, where repository secrets are not exposed; analysis
+      is then skipped with a warning and the build and test steps still run. An
+      empty token on any other run is treated as a misconfiguration and fails
+      the job.
     required: true
   sonar-url:
     description: 'SonarQube Url, defaults to SonarCloud'
@@ -56,7 +57,11 @@ runs:
       shell: pwsh
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
-        IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        # GitHub withholds ordinary Actions secrets from two kinds of pull request:
+        # those raised from a fork, and those authored by Dependabot. A Dependabot
+        # branch lives in *this* repository, so the fork test alone does not catch
+        # it — the author has to be checked separately.
+        SECRETS_WITHHELD: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') }}
       run: |
         $tokenPresent = -not [string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)
         if ($tokenPresent) {
@@ -64,12 +69,11 @@ runs:
           Write-Output "SonarCloud token supplied ($($env:SONAR_TOKEN.Length) characters); analysis enabled."
           exit 0
         }
-        # Secrets are not exposed to pull requests raised from forks (or to
-        # Dependabot), so an absent token there is expected rather than a
+        # An absent token on those pull requests is expected rather than a
         # misconfiguration. Skip the analysis but let build and test proceed.
-        if ($env:IS_FORK_PR -eq 'true') {
+        if ($env:SECRETS_WITHHELD -eq 'true') {
           Add-Content -Path $env:GITHUB_OUTPUT -Value 'enabled=false'
-          Write-Output "::warning::No SonarCloud token is available on a pull request from a fork. Skipping SonarCloud analysis; build and test still run."
+          Write-Output "::warning::No SonarCloud token is available on this pull request (raised from a fork, or authored by Dependabot). Skipping SonarCloud analysis; build and test still run."
           exit 0
         }
         Write-Output "::error::The 'sonar-token' input is empty. SonarCloud analysis would run anonymously and then fail during post-processing with a misleading 'Not authorized or project not found'. Check that the calling workflow passes a non-empty secret and that the secret is available to this job."
