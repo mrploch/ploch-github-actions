@@ -21,32 +21,89 @@ inputs:
     description: 'SonarCloud organization'
     required: true
   sonar-token:
-    description: 'SonarCloud token'
+    description: >-
+      SonarCloud token. May be empty on a pull request raised from a fork or
+      authored by Dependabot, where repository secrets are not exposed; analysis
+      is then skipped with a warning and the build and test steps still run. An
+      empty token on any other run is treated as a misconfiguration and fails
+      the job.
     required: true
   sonar-url:
     description: 'SonarQube Url, defaults to SonarCloud'
     default: 'https://sonarcloud.io'
     required: false
+  sonar-project-version:
+    description: >-
+      Project version reported to SonarCloud as sonar.projectVersion. Supply the
+      build version (for example the output of nbgv get-version --variable
+      NuGetPackageVersion). Without it the "Previous version" new-code definition
+      has no version history to diff against and every analysis treats the entire
+      baseline as new code. Optional but strongly recommended.
+    required: false
+    default: ''
+  sonar-coverage-exclusions:
+    description: >-
+      Comma-separated glob list passed as sonar.coverage.exclusions. Files matched
+      here are not counted against the coverage percentage. The default excludes
+      test projects, scripts and generated annotation files. Pass an empty string
+      to disable exclusions entirely.
+    required: false
+    default: '**/*.ps1,**/JetbrainsAnnotations.cs,**/*.Tests/**,**/*.Tests.csproj,scripts/**,**/TestAssemblies/**'
 runs:
   using: "composite"
   steps:
-    - name: Validate SonarCloud Token
+    - name: Determine SonarCloud eligibility
+      id: sonar-eligibility
       shell: pwsh
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
+        # GitHub withholds ordinary Actions secrets from two kinds of pull request:
+        # those raised from a fork, and those authored by Dependabot. A Dependabot
+        # branch lives in *this* repository, so the fork test alone does not catch
+        # it — the author has to be checked separately.
+        SECRETS_WITHHELD: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') }}
+      # This step never fails, even on a misconfiguration: failing here would
+      # halt the action and skip Setup .NET, Restore, Build and Test, losing
+      # the compile-and-test signal entirely. A misconfiguration is recorded
+      # instead and reported by the final step, once build and test have run.
       run: |
-        if ([string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
-          Write-Output "::error::The 'sonar-token' input is empty. SonarCloud analysis would run anonymously and then fail during post-processing with a misleading 'Not authorized or project not found'. Check that the calling workflow passes a non-empty secret and that the secret is available to this job."
-          exit 1
+        if (-not [string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'enabled=true'
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'misconfigured=false'
+          Write-Output "SonarCloud token supplied ($($env:SONAR_TOKEN.Length) characters); analysis enabled."
+          exit 0
         }
-        Write-Output "SonarCloud token supplied ($($env:SONAR_TOKEN.Length) characters)."
+        Add-Content -Path $env:GITHUB_OUTPUT -Value 'enabled=false'
+        # An absent token on those pull requests is expected rather than a
+        # misconfiguration. Skip the analysis but let build and test proceed.
+        if ($env:SECRETS_WITHHELD -eq 'true') {
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'misconfigured=false'
+          Write-Output "::warning::No SonarCloud token is available on this pull request (raised from a fork, or authored by Dependabot). Skipping SonarCloud analysis; build and test still run."
+          exit 0
+        }
+        Add-Content -Path $env:GITHUB_OUTPUT -Value 'misconfigured=true'
+        Write-Output "::error::The 'sonar-token' input is empty. SonarCloud analysis would run anonymously and then fail during post-processing with a misleading 'Not authorized or project not found'. Check that the calling workflow passes a non-empty secret and that the secret is available to this job."
     - name: Action Properties
       shell: pwsh
+      env:
+        SOLUTION_PATH: ${{ inputs.solution-path }}
+        DOTNET_VERSION: ${{ inputs.dotnet-version }}
+        SONAR_ORGANIZATION: ${{ inputs.sonar-organization }}
+        SONAR_PROJECT_KEY: ${{ inputs.sonar-project-key }}
+        SONAR_PROJECT_VERSION: ${{ inputs.sonar-project-version }}
+        SONAR_ENABLED: ${{ steps.sonar-eligibility.outputs.enabled }}
       run: |
-        $InformationPreference="Continue"
-        Write-Information "Building ${{ inputs.solution-path }} with .NET ${{ inputs.dotnet-version }}"
-        Write-Information "SonarCloud Organization: ${{ inputs.sonar-organization }} Project Key: ${{ inputs.sonar-project-key }}"
+        $InformationPreference = "Continue"
+        Write-Information "Building $env:SOLUTION_PATH with .NET $env:DOTNET_VERSION"
+        Write-Information "SonarCloud Organization: $env:SONAR_ORGANIZATION Project Key: $env:SONAR_PROJECT_KEY"
+        Write-Information "SonarCloud analysis enabled: $env:SONAR_ENABLED"
+        if ([string]::IsNullOrWhiteSpace($env:SONAR_PROJECT_VERSION)) {
+          Write-Information "No sonar-project-version supplied; the 'Previous version' new-code definition will have no version history to diff against."
+        } else {
+          Write-Information "SonarCloud Project Version: $env:SONAR_PROJECT_VERSION"
+        }
     - uses: actions/setup-java@v5
+      if: steps.sonar-eligibility.outputs.enabled == 'true'
       with:
         distribution: 'zulu' # See 'Supported distributions' for available options
         java-version: '17'
@@ -54,28 +111,86 @@ runs:
       uses: actions/setup-dotnet@v6
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
-    - name: Restore dependencies    
+    - name: Restore dependencies
       shell: pwsh
-      run: dotnet restore ${{ inputs.solution-path }}
+      env:
+        SOLUTION_PATH: ${{ inputs.solution-path }}
+      run: dotnet restore $env:SOLUTION_PATH
     - name: Install SonarCloud Scanner
+      if: steps.sonar-eligibility.outputs.enabled == 'true'
       shell: pwsh
       run: dotnet tool install --global dotnet-sonarscanner
     - name: Install dotnet-coverage
+      if: steps.sonar-eligibility.outputs.enabled == 'true'
       shell: pwsh
       run: dotnet tool install --global dotnet-coverage
     - name: SonarScanner Begin
+      id: sonar-begin
+      if: steps.sonar-eligibility.outputs.enabled == 'true'
       shell: pwsh
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
-      run: dotnet sonarscanner begin /k:"${{ inputs.sonar-project-key }}" /o:"${{ inputs.sonar-organization }}" /d:sonar.token="$env:SONAR_TOKEN" /d:sonar.cs.opencover.reportsPaths=**/CoverageResults/coverage.opencover.xml /d:sonar.host.url="${{ inputs.sonar-url }}"
+        SONAR_PROJECT_KEY: ${{ inputs.sonar-project-key }}
+        SONAR_ORGANIZATION: ${{ inputs.sonar-organization }}
+        SONAR_URL: ${{ inputs.sonar-url }}
+        SONAR_PROJECT_VERSION: ${{ inputs.sonar-project-version }}
+        SONAR_COVERAGE_EXCLUSIONS: ${{ inputs.sonar-coverage-exclusions }}
+        PROJECT_BASE_DIR: ${{ github.workspace }}
+      run: |
+        # Inputs are read from the environment rather than interpolated into the
+        # command line, so a value containing quotes cannot break out of the call.
+        $sonarArgs = @(
+          "/k:$env:SONAR_PROJECT_KEY"
+          "/o:$env:SONAR_ORGANIZATION"
+          "/d:sonar.token=$env:SONAR_TOKEN"
+          "/d:sonar.host.url=$env:SONAR_URL"
+          "/d:sonar.projectBaseDir=$env:PROJECT_BASE_DIR"
+          "/d:sonar.scm.provider=git"
+          # Coverlet emits one file per assembly (coverage.<Assembly>.opencover.xml)
+          # for multi-project solutions, so the glob must not pin the exact name.
+          "/d:sonar.cs.opencover.reportsPaths=**/CoverageResults/coverage*.opencover.xml"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($env:SONAR_PROJECT_VERSION)) {
+          $sonarArgs += "/v:$env:SONAR_PROJECT_VERSION"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:SONAR_COVERAGE_EXCLUSIONS)) {
+          $sonarArgs += "/d:sonar.coverage.exclusions=$env:SONAR_COVERAGE_EXCLUSIONS"
+        }
+        dotnet sonarscanner begin @sonarArgs
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # Build and Test always run, regardless of SonarCloud status. Without
+    # !cancelled() a failed scanner install or `begin` would halt the action
+    # and skip them, losing the compile-and-test signal because of an ancillary
+    # tool. A scanner failure still fails the job — it just no longer
+    # suppresses the result that matters most.
     - name: Build
+      if: ${{ !cancelled() }}
       shell: pwsh
-      run: dotnet build ${{ inputs.solution-path }} --no-restore
+      env:
+        SOLUTION_PATH: ${{ inputs.solution-path }}
+      run: dotnet build $env:SOLUTION_PATH --no-restore
     - name: Test Coverage
+      if: ${{ !cancelled() }}
       shell: pwsh
-      run: dotnet test ${{ inputs.solution-path }} --verbosity normal --no-build --logger "trx;LogFileName=test-results.trx" /p:CollectCoverage=true /p:CoverletOutput=./CoverageResults/ "/p:CoverletOutputFormat=cobertura%2copencover"
+      env:
+        SOLUTION_PATH: ${{ inputs.solution-path }}
+      run: dotnet test $env:SOLUTION_PATH --verbosity normal --no-build --logger "trx;LogFileName=test-results.trx" /p:CollectCoverage=true /p:CoverletOutput=./CoverageResults/ "/p:CoverletOutputFormat=cobertura%2copencover"
     - name: SonarScanner End
+      # Runs even when the build or tests failed, so the analysis opened by
+      # `begin` is always closed out and the pull request still gets decorated.
+      if: ${{ !cancelled() && steps.sonar-eligibility.outputs.enabled == 'true' && steps.sonar-begin.outcome == 'success' }}
       shell: pwsh
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
-      run: dotnet sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
+      run: |
+        dotnet sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # Deferred failure for a genuinely missing token. The eligibility step
+    # recorded the problem rather than failing, so that build and test could
+    # still run; the job is failed here instead, once they have.
+    - name: Fail on missing SonarCloud token
+      if: ${{ !cancelled() && steps.sonar-eligibility.outputs.misconfigured == 'true' }}
+      shell: pwsh
+      run: |
+        Write-Output "::error::SonarCloud analysis was skipped because the 'sonar-token' input was empty on a run that should have access to it. See the 'Determine SonarCloud eligibility' step above."
+        exit 1
