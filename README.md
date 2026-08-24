@@ -101,11 +101,22 @@ check.
 |---|---|---|
 | present | any | analysis runs |
 | absent | fork, or Dependabot-authored | `::warning::`, scanner skipped, build and test still run |
-| absent | anything else | `::error::`, job fails |
+| absent | anything else | `::error::`, **job fails** — but only after build and test have run |
 
 An empty token on an ordinary run is treated as a misconfiguration and fails the job
 — silently analysing anonymously produces a misleading
 `Not authorized or project not found` much later in the run.
+
+### Build and test always run
+
+Whatever happens to SonarCloud, `Build` and `Test Coverage` run. A scanner failure,
+a failed tool install, or a missing token fails the job **without** suppressing the
+compile-and-test result — losing that signal because of an ancillary tool is worse
+than the Sonar failure itself.
+
+This is why the eligibility step records a missing token rather than failing on the
+spot, and why the error is raised by a final `Fail on missing SonarCloud token` step
+at the end of the action.
 
 ### Coverage
 

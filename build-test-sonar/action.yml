@@ -62,22 +62,27 @@ runs:
         # branch lives in *this* repository, so the fork test alone does not catch
         # it — the author has to be checked separately.
         SECRETS_WITHHELD: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') }}
+      # This step never fails, even on a misconfiguration: failing here would
+      # halt the action and skip Setup .NET, Restore, Build and Test, losing
+      # the compile-and-test signal entirely. A misconfiguration is recorded
+      # instead and reported by the final step, once build and test have run.
       run: |
-        $tokenPresent = -not [string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)
-        if ($tokenPresent) {
+        if (-not [string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
           Add-Content -Path $env:GITHUB_OUTPUT -Value 'enabled=true'
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'misconfigured=false'
           Write-Output "SonarCloud token supplied ($($env:SONAR_TOKEN.Length) characters); analysis enabled."
           exit 0
         }
+        Add-Content -Path $env:GITHUB_OUTPUT -Value 'enabled=false'
         # An absent token on those pull requests is expected rather than a
         # misconfiguration. Skip the analysis but let build and test proceed.
         if ($env:SECRETS_WITHHELD -eq 'true') {
-          Add-Content -Path $env:GITHUB_OUTPUT -Value 'enabled=false'
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'misconfigured=false'
           Write-Output "::warning::No SonarCloud token is available on this pull request (raised from a fork, or authored by Dependabot). Skipping SonarCloud analysis; build and test still run."
           exit 0
         }
+        Add-Content -Path $env:GITHUB_OUTPUT -Value 'misconfigured=true'
         Write-Output "::error::The 'sonar-token' input is empty. SonarCloud analysis would run anonymously and then fail during post-processing with a misleading 'Not authorized or project not found'. Check that the calling workflow passes a non-empty secret and that the secret is available to this job."
-        exit 1
     - name: Action Properties
       shell: pwsh
       env:
@@ -153,12 +158,19 @@ runs:
         }
         dotnet sonarscanner begin @sonarArgs
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # Build and Test always run, regardless of SonarCloud status. Without
+    # !cancelled() a failed scanner install or `begin` would halt the action
+    # and skip them, losing the compile-and-test signal because of an ancillary
+    # tool. A scanner failure still fails the job — it just no longer
+    # suppresses the result that matters most.
     - name: Build
+      if: ${{ !cancelled() }}
       shell: pwsh
       env:
         SOLUTION_PATH: ${{ inputs.solution-path }}
       run: dotnet build $env:SOLUTION_PATH --no-restore
     - name: Test Coverage
+      if: ${{ !cancelled() }}
       shell: pwsh
       env:
         SOLUTION_PATH: ${{ inputs.solution-path }}
@@ -173,3 +185,12 @@ runs:
       run: |
         dotnet sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # Deferred failure for a genuinely missing token. The eligibility step
+    # recorded the problem rather than failing, so that build and test could
+    # still run; the job is failed here instead, once they have.
+    - name: Fail on missing SonarCloud token
+      if: ${{ !cancelled() && steps.sonar-eligibility.outputs.misconfigured == 'true' }}
+      shell: pwsh
+      run: |
+        Write-Output "::error::SonarCloud analysis was skipped because the 'sonar-token' input was empty on a run that should have access to it. See the 'Determine SonarCloud eligibility' step above."
+        exit 1
